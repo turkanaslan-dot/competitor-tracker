@@ -6,7 +6,6 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_ANON_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Cədvəldəki bütün banklar və onların Meta Page ID-ləri
 const COMPETITORS = [
   { name: 'Birbank Biznes', pageId: '105337399287664' },
   { name: 'PASHA Bank', pageId: '210327156022645' },
@@ -21,46 +20,49 @@ const COMPETITORS = [
 
 export default async function handler(req, res) {
   try {
-    let totalAdsInserted = 0;
+    let results = [];
 
     for (const competitor of COMPETITORS) {
-      const targetUrl = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=${competitor.pageId}`;
-      
-      const response = await axios.get(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      });
+      try {
+        const targetUrl = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=ALL&view_all_page_id=${competitor.pageId}`;
+        
+        const response = await axios.get(targetUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: 7000 // 7 saniyə vaxt limiti
+        });
 
-      const $ = cheerio.load(response.data);
-      const adsFound = [];
+        const $ = cheerio.load(response.data);
+        const adsFound = [];
 
-      $('div').each((i, elem) => {
-        const adText = $(elem).find('span').text().trim();
-        if (adText && adText.length > 20) {
-          adsFound.push({
-            competitor_name: competitor.name,
-            ad_text: adText.slice(0, 500),
-            media_url: '',
-            is_active: true
-          });
-        }
-      });
+        $('div').each((i, elem) => {
+          const adText = $(elem).find('span').text().trim();
+          if (adText && adText.length > 20) {
+            adsFound.push({
+              competitor_name: competitor.name,
+              ad_text: adText.slice(0, 500),
+              media_url: '',
+              is_active: true
+            });
+          }
+        });
 
-      if (adsFound.length > 0) {
-        // Hər bank üzrə tapılan son 5 reklamı bazaya əlavə edirik
-        const uniqueAds = adsFound.slice(0, 5);
-        const { error } = await supabase.from('competitor_ads').insert(uniqueAds);
-        if (!error) {
-          totalAdsInserted += uniqueAds.length;
+        if (adsFound.length > 0) {
+          const uniqueAds = adsFound.slice(0, 2);
+          await supabase.from('competitor_ads').insert(uniqueAds);
+          results.push({ bank: competitor.name, status: 'Uğurlu' });
+        } else {
+          results.push({ bank: competitor.name, status: 'Reklam tapılmadı' });
         }
+      } catch (err) {
+        // Hər hansı bankda xəta olsa belə kod dayanmır, növbəti banka keçir
+        results.push({ bank: competitor.name, status: 'Bloklandı/Xəta', error: err.message });
       }
     }
 
-    return res.status(200).json({ 
-      status: 'success', 
-      message: `${COMPETITORS.length} bank üzrə ümumi ${totalAdsInserted} reklam bazaya əlavə olundu!` 
-    });
+    return res.status(200).json({ status: 'success', results });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
